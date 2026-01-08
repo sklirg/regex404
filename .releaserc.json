@@ -1,0 +1,18 @@
+{
+  "branches": ["main", "ci"],
+  "plugins": [
+    "@semantic-release/commit-analyzer",
+    "@semantic-release/release-notes-generator",
+    [
+      "@semantic-release/github",
+      {
+        "assets": [
+          { "path": "regex404-aarch64-apple-darwin/regex404", "label": "regex404-darwin-arm64", "name": "regex404-darwin-arm64"  },
+          { "path": "regex404-aarch64-unknown-linux-musl/regex404", "label": "regex404-linux-arm64", "name": "regex404-linux-arm64" },
+          { "path": "regex404-x86_64-unknown-linux-musl/regex404", "label": "regex404-linux-amd64", "name": "regex404-linux-amd64" }
+        ],
+        "draftRelease": true
+      }
+    ]
+  ]
+}

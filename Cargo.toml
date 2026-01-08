@@ -1,8 +1,11 @@
 [package]
-name = "regex102"
+name = "regex404"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 clap = { version = "4.5.54", features = ["derive"] }
+colored = "3.0.0"
+env_logger = "0.11.8"
+log = "0.4.29"
 regex = "1.12.2"

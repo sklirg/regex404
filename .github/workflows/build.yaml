@@ -1,0 +1,62 @@
+name: Build
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: cargo build
+    runs-on: ${{ matrix.target.host }}
+    strategy:
+      fail-fast: true
+      matrix:
+        target:
+          - { name: x86_64-unknown-linux-musl, host: ubuntu-latest }
+          - { name: aarch64-unknown-linux-musl, host: ubuntu-latest }
+          - { name: aarch64-apple-darwin, host: macos-latest }
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target.name }}
+
+      - run: cargo build --release
+
+      - uses: actions/upload-artifact@v6
+        with:
+          path: target/release/regex404
+          name: regex404-${{ matrix.target.name }}
+
+  release:
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci'
+    name: Release
+    runs-on: ubuntu-latest
+    needs:
+      - build
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+
+      - name: Download binaries
+        uses: actions/download-artifact@v7
+
+      - name: Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx semantic-release
