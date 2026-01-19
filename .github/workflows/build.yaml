@@ -32,7 +32,7 @@ jobs:
           name: regex404-${{ matrix.target.name }}
 
   release:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci'
+    if: github.ref == 'refs/heads/main'
     name: Release
     runs-on: ubuntu-latest
     needs:
