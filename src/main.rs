@@ -1,26 +1,52 @@
-use clap::Parser;
+use clap::{Args, Parser, Subcommand};
 use colored::Colorize;
 use log::{debug, info, warn};
 use regex::Regex;
+use serde::Deserialize;
 use std::fmt::Debug;
-use std::fs;
-use std::path::Path;
+use std::fs::{self};
+use std::path::{Path, PathBuf};
+use walkdir::WalkDir;
 
 /// Regex404 is a tool to debug regular expressions on some content in a file.
 #[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
-struct Args {
+#[command(version, about, long_about = None, args_conflicts_with_subcommands = true)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
+    #[command(flatten)]
+    main: DefaultProgram,
+}
+
+/// Default program (you can omit any (sub)command to run this program).
+#[derive(Args, Debug)]
+struct DefaultProgram {
     /// Path to file to check the pattern against
-    #[arg(short, long)]
-    file: String,
+    #[arg(short, long, required = true)]
+    file: Option<PathBuf>,
 
     /// Regex to run on {file}
-    #[arg(short, long)]
-    regex: Regex,
+    #[arg(short, long, required = true)]
+    regex: Option<Regex>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    Main(DefaultProgram),
+
+    /// Find all regex customManagers in a renovate.json file
+    /// and run the matchers on all files.
+    Renovate {
+        /// Path to renovate-formatted file
+        #[arg(short, long, default_value = "renovate.json")]
+        file: PathBuf,
+    },
 }
 
 enum ProgError {
     IO(String),
+    ParseFailure(String),
     NoMatch,
 }
 
@@ -35,10 +61,15 @@ fn main() -> Result<(), ProgError> {
         .filter_level(log::LevelFilter::Info)
         .parse_env("RUST_LOG")
         .init();
-    let args = Args::parse();
-    let pathy = Path::new(&args.file);
-
-    match_file(pathy, args.regex)
+    let cli = Cli::parse();
+    match cli.command.unwrap_or(Commands::Main(cli.main)) {
+        Commands::Renovate { file } => renovate(&file),
+        Commands::Main(args) => {
+            let file = args.file.unwrap();
+            let pathy = Path::new(&file);
+            match_file(pathy, args.regex.unwrap())
+        }
+    }
 }
 
 fn match_file(file: &Path, re: Regex) -> Result<(), ProgError> {
@@ -164,11 +195,105 @@ fn match_file(file: &Path, re: Regex) -> Result<(), ProgError> {
     Ok(())
 }
 
+#[derive(Debug, Deserialize)]
+struct CustomMatcher {
+    #[serde(rename = "customType")]
+    type_: String,
+    #[serde(rename = "managerFilePatterns")]
+    file_patterns: Vec<String>,
+    #[serde(rename = "matchStrings")]
+    regexes: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RenovateScheme {
+    #[serde(rename = "customManagers")]
+    custom_matchers: Vec<CustomMatcher>,
+}
+
+fn renovate(file: &PathBuf) -> Result<(), ProgError> {
+    let renovate_config_file = match fs::read_to_string(file) {
+        Ok(data) => data,
+        Err(err) => return Err(ProgError::IO(err.to_string() + &format!(": {file:?}"))),
+    };
+    let renovate_config: RenovateScheme = match serde_json::from_str(&renovate_config_file) {
+        Ok(conf) => conf,
+        Err(err) => return Err(ProgError::ParseFailure(err.to_string())),
+    };
+
+    for matcher in renovate_config.custom_matchers {
+        if matcher.type_.to_lowercase() != "regex" {
+            continue;
+        }
+
+        for pattern in &matcher.file_patterns {
+            debug!("File pattern: {pattern}");
+            // Removing leading and trailing slashes (/)
+            let pattern = pattern.trim_matches('/');
+            debug!("File pattern trimmed: {pattern}");
+
+            let file_regex = match Regex::new(pattern) {
+                Ok(re) => re,
+                Err(err) => {
+                    return Err(ProgError::ParseFailure(format!(
+                        "Failed to parse file pattern regex: {err:?}"
+                    )));
+                }
+            };
+
+            debug!("File pattern parsed: {file_regex}");
+
+            for entry in WalkDir::new(".") {
+                let entry = match entry {
+                    Ok(path) => path,
+                    Err(_) => continue,
+                };
+
+                // Easier to work with filename
+                let mut file = entry.path().to_str().expect("dir entry should exist");
+
+                if !file_regex.to_string().starts_with(".") {
+                    // Remove leading ./ from file name as it might clash with regex.
+                    file = file.trim_start_matches("./");
+                }
+
+                debug!("Walking into {file:?}");
+
+                if !file_regex.is_match(file) {
+                    debug!("Skipping dir cuz no regex mach");
+                    continue;
+                }
+                debug!("Found a match with {file_regex:?} on {file:?}");
+
+                for regex in &matcher.regexes {
+                    debug!("Running regex: {regex}");
+                    let re = match Regex::new(regex) {
+                        Ok(re) => re,
+                        Err(err) => {
+                            return Err(ProgError::ParseFailure(format!(
+                                "Failed to parse regex: {err:?}"
+                            )));
+                        }
+                    };
+
+                    match match_file(entry.path(), re) {
+                        Ok(_) => (),
+                        Err(_) => debug!("Found no match for {regex} in {file}"),
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 impl Debug for ProgError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let msg = match self {
             ProgError::IO(m) => m.to_owned(),
             ProgError::NoMatch => "found no matches".to_owned(),
+            ProgError::ParseFailure(msg) => format!("failed to parse: {msg}").to_owned(),
         };
         f.write_str(&msg)
     }
