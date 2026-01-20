@@ -4,6 +4,7 @@ use log::{debug, info, warn};
 use regex::Regex;
 use std::fmt::Debug;
 use std::fs;
+use std::path::Path;
 
 /// Regex404 is a tool to debug regular expressions on some content in a file.
 #[derive(Parser, Debug)]
@@ -35,11 +36,14 @@ fn main() -> Result<(), ProgError> {
         .parse_env("RUST_LOG")
         .init();
     let args = Args::parse();
+    let pathy = Path::new(&args.file);
 
-    let file = &args.file;
+    match_file(pathy, args.regex)
+}
+
+fn match_file(file: &Path, re: Regex) -> Result<(), ProgError> {
     let haystack = fs::read_to_string(file)
-        .map_err(|err| ProgError::IO(format!("failed to read file '{file}': {err}")))?;
-    let re = args.regex;
+        .map_err(|err| ProgError::IO(format!("failed to read file {file:?}: {err}")))?;
 
     let coloring = colored::control::ShouldColorize::from_env().should_colorize();
     if !coloring {
